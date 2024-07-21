@@ -1,9 +1,10 @@
-from collections.abc import Callable
+import dataclasses
+from collections.abc import Callable, Mapping
 from functools import wraps
-from typing import TypeAlias, TypeVar, get_type_hints
+from typing import ParamSpec, TypeAlias, TypeVar, get_type_hints
 
 import httpx
-from fastapi.params import Query
+from fastapi import params as fastapi_params
 from pydantic import BaseModel, TypeAdapter
 from typing_extensions import TypedDict
 
@@ -20,18 +21,53 @@ T = TypeVar("T", bound=BaseModel)
 R = TypeVar("R", BaseModel, JSON, httpx.Response)
 
 
-def get_query_params_spec(method) -> dict:
-    query_params = {}
-    for k, a in method.__annotations__.items():
-        match getattr(a, "__metadata__", None):
-            case (*_, Query()):
-                query_params[k] = a
-    return query_params
+@dataclasses.dataclass
+class RequestParamsTypeAdapters:
+    all: TypeAdapter
+    query: TypeAdapter | None = None
+    path: TypeAdapter | None = None
+
+    def build_request(self, method: str, url: str, **kwargs) -> httpx.Request:
+        path_params = self.path.dump_python(kwargs) if self.path else None
+        query_params = self.query.dump_python(kwargs, by_alias=True) if self.query else None
+        return httpx.Request(
+            method,
+            url=url.format(**path_params) if path_params else url,
+            params=query_params,
+        )
 
 
-def get_query_params_type_adapter(method):
-    spec = get_query_params_spec(method)
-    return TypeAdapter(TypedDict("QueryParams", **spec))
+class GroupedRequestParams(TypedDict, total=False):
+    query: Mapping[str, ParamSpec]
+    path: Mapping[str, ParamSpec]
+
+
+AllRequestParams: TypeAlias = Mapping[str, ParamSpec]
+
+
+def get_params_spec(request_func) -> tuple[AllRequestParams, GroupedRequestParams]:
+    grouped_params_specs = {}
+    request_params_specs = {}
+
+    for param_key, param_spec in request_func.__annotations__.items():
+        match getattr(param_spec, "__metadata__", None):
+            case (*_, fastapi_params.Param() as param):
+                grouped_params_specs.setdefault(param.in_.value, {})[param_key] = param_spec
+                request_params_specs[param_key] = param_spec
+
+    return request_params_specs, grouped_params_specs
+
+
+def get_request_params_type_adapters(request_func) -> RequestParamsTypeAdapters:
+    all_params, grouped_params = get_params_spec(request_func)
+    return RequestParamsTypeAdapters(
+        all=TypeAdapter(TypedDict("AllParams", all_params)),
+        query=TypeAdapter(TypedDict("QueryParams", grouped_params["query"])) if "query" in grouped_params else None,
+        path=TypeAdapter(TypedDict("PathParams", grouped_params["path"])) if "path" in grouped_params else None,
+    )
+
+
+def build_request(method: str, url: str, request_kwargs, type_adapters: RequestParamsTypeAdapters): ...
 
 
 def get(url: str) -> Callable:
@@ -44,18 +80,13 @@ def get(url: str) -> Callable:
                 f"Type specified is: {return_type}"
             )
 
-        type_adapter = get_query_params_type_adapter(request_func)
+        type_adapters = get_request_params_type_adapters(request_func)
 
         @wraps(request_func)
         def wrapper(self: ApiClient, *args, **kwargs) -> R:
-            query_params = type_adapter.validate_python(kwargs)
+            validated_params = type_adapters.all.validate_python(kwargs)
 
-            response = self._adapter.request(
-                "GET",
-                url,
-                params=type_adapter.dump_python(query_params, by_alias=True),
-            )
-
+            response = self._adapter.send(type_adapters.build_request("GET", url, **validated_params))
             response.raise_for_status()
 
             if issubclass(return_type, BaseModel):

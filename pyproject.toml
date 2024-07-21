@@ -17,6 +17,7 @@ ruff = "^0.5.3"
 pytest = "^8.2.2"
 pytest-mock = "^3.14.0"
 ruff-lsp = "^0.0.54"
+syrupy = "^4.6.1"
 
 [tool.ruff]
 line-length = 120

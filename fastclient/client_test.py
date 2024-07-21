@@ -8,7 +8,7 @@ from annotated_types import Gt
 from fastapi import Path, Query
 from pytest_mock import MockerFixture
 
-from fastclient.client import ApiClient, get
+from fastclient.client import ApiClient, get, get_params_spec
 
 PositiveInt = Annotated[int, Gt(0)]
 
@@ -67,3 +67,11 @@ def test_path_params_using_kwargs(
     client.path_params_using_kwargs(post_id=post_id)
 
     assert f"/posts/{post_id}/comments" == httpx_request.url.path
+
+
+def test_get_params_spec(snapshot):
+    class TestSubject:
+        def all_possible_params(self, *, post_id: Annotated[PositiveInt, Path()], ignore_me: bool): ...
+
+    all_params, _ = get_params_spec(TestSubject.all_possible_params)
+    assert all_params == snapshot
