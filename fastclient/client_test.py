@@ -5,9 +5,9 @@ from unittest import mock
 import httpx
 import pytest
 from annotated_types import Gt
-from fastapi import Path, Query
 from pytest_mock import MockerFixture
 
+from fastclient import Path, Query
 from fastclient.client import ApiClient, get, get_params_spec
 
 PositiveInt = Annotated[int, Gt(0)]
