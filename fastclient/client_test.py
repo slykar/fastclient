@@ -3,6 +3,7 @@ from typing import Annotated, Type, TypeVar
 from unittest import mock
 
 import httpx
+import pydantic
 import pytest
 from annotated_types import Gt
 from pytest_mock import MockerFixture
@@ -65,6 +66,30 @@ def test_path_params_using_kwargs(
 
     client = client_factory(TestClient)
     client.path_params_using_kwargs(post_id=post_id)
+
+    assert f"/posts/{post_id}/comments" == httpx_request.url.path
+
+
+def test_request_body_with_model(
+    client_factory,
+    httpx_request: httpx.Request,
+):
+    class CreatePostRequest(pydantic.BaseModel):
+        title: str
+        body: str
+
+    class CreatePostResponse(pydantic.BaseModel):
+        title: str
+        body: str
+
+    class TestClient(ApiClient):
+        @get("/posts")
+        def create_post(self, *, post: CreatePostRequest) -> CreatePostResponse: ...
+
+    post_id = 123
+
+    client = client_factory(TestClient)
+    client.create_post(post_id=post_id)
 
     assert f"/posts/{post_id}/comments" == httpx_request.url.path
 
